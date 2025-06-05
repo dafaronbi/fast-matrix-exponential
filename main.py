@@ -15,9 +15,14 @@ from adam import Adam
 from adamax import Adamax
 from nets import Model
 from utils import preprocess, postprocess
+from torch.utils.tensorboard import SummaryWriter
 
 
 def main(args):
+
+    #log for tensorboard
+    writer = SummaryWriter(args.tb_path + "/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
+
     if args.mode == 'train':
         device = torch.device(args.device)
         save_dir = get_save_dir(args)
@@ -38,7 +43,7 @@ def main(args):
         init_data = get_init_data(args, train_data)
         # param_num = sum(p.numel() for p in model.parameters())
         # print('parameter number  ', param_num)
-        train(args, device, save_dir, model, optimizer, scheduler, train_loader, test_loader, init_data)
+        train(args, device, save_dir, model, optimizer, scheduler, train_loader, test_loader, init_data, writer)
 
 
     elif args.mode == 'test':
@@ -87,9 +92,12 @@ def main(args):
 
     else:
         raise ValueError('wrong mode')
+    
+    writer.flush()
+    writer.close()
 
 
-def train(args, device, save_dir, model, optimizer, scheduler, train_loader, test_loader, init_data):
+def train(args, device, save_dir, model, optimizer, scheduler, train_loader, test_loader, init_data, writer):
     train_log = {'train_loss': [], 'epoch_loss': [], 'epoch_time': [], 'test_loss': []}
     start_epoch = 1
     best_loss = 1e8
@@ -123,14 +131,14 @@ def train(args, device, save_dir, model, optimizer, scheduler, train_loader, tes
         t0 = time.time()
 
         i = 0
-        for data, _ in test_loader:
+        for data, _ in train_loader:
             data = data.to(device)
             z = torch.rand_like(data)
             data = preprocess(data, args.bits, z)
             output, log_det = model(data)
             loss = compute_loss(args, output, log_det)
             train_log['train_loss'].append(loss.item() / (np.log(2) * args.dimension))
-            print(f"Loss({i}): {loss.item()}")
+            # print(f"Loss({i}): {loss.item()}")
             total_loss += loss.item() * data.size(0)
             number += data.size(0)
             optimizer.zero_grad()
@@ -145,6 +153,8 @@ def train(args, device, save_dir, model, optimizer, scheduler, train_loader, tes
         t1 = time.time()
         train_log['epoch_time'].append((epoch, t1 - t0))
         print('[train:epoch {}]. loss: {:.8f},time:{:.1f}s '.format(epoch, bits_per_dim, t1 - t0))
+        writer.add_scalar("Training/Loss", bits_per_dim, epoch)
+        writer.add_scalar("Training/Time", t1 - t0, epoch)
         scheduler.step()
         if not (epoch % args.test_interval):
             optimizer.swap()
@@ -372,7 +382,10 @@ if __name__ == '__main__':
     parser.add_argument('--seed', type=int, default=0,
                         help='seed')
     parser.add_argument('--expm', type=str, default="old",
+                        choices=['old', 'new'],
                         help='matrix exponential function to use (old or new)')
+    parser.add_argument('--tb_path', type=str, default="tensorboard/default",
+                        help='path where tensorboard file will be saved')
     parse_args = parser.parse_args()
 
     """
