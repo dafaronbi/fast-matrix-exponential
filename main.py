@@ -205,7 +205,7 @@ def get_save_dir(args):
 
 def get_model(args):
     model = Model(args.levels, args.num_flows, args.conv_type, args.flow_type, args.num_blocks, args.hidden_channels,
-                  args.image_size)
+                  args.image_size, args.expm)
     return model
 
 
@@ -371,6 +371,8 @@ if __name__ == '__main__':
                         help='polyak average')
     parser.add_argument('--seed', type=int, default=0,
                         help='seed')
+    parser.add_argument('--expm', type=str, default="old",
+                        help='matrix exponential function to use (old or new)')
     parse_args = parser.parse_args()
 
     """

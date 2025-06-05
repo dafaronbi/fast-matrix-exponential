@@ -90,7 +90,7 @@ class Conv1x1(nn.Module):
     Matrix exp convolutions: y = e^{W}x
     """
 
-    def __init__(self, in_channels, conv_type):
+    def __init__(self, in_channels, conv_type, expm_f):
         super(Conv1x1, self).__init__()
         self.in_channels = in_channels
         self.conv_type = conv_type
@@ -107,6 +107,7 @@ class Conv1x1(nn.Module):
             self.register_buffer('l_mask', l_mask)
             self.register_buffer('identity', identity)
             self.register_buffer('u_mask', u_mask)
+        self.expm = expm_f
 
     def forward(self, x, reverse=False, init=False):
         if init:
@@ -128,7 +129,7 @@ class Conv1x1(nn.Module):
 
         if not reverse:
             if self.conv_type == 'matrixexp':
-                weight = expm(self.weight)
+                weight = self.expm(self.weight)
                 x = F.conv2d(x, weight.view(self.in_channels, self.in_channels, 1, 1))
                 log_det = torch.diagonal(self.weight).sum().mul(x.size(2) * x.size(3))
             elif self.conv_type == 'standard':
@@ -145,7 +146,7 @@ class Conv1x1(nn.Module):
                 raise ValueError('wrong 1x1 conlution type')
         else:
             if self.conv_type == 'matrixexp':
-                weight = expm(-self.weight)
+                weight = self.expm(-self.weight)
                 x = F.conv2d(x, weight.view(self.in_channels, self.in_channels, 1, 1))
                 log_det = torch.diagonal(self.weight).sum().mul(x.size(2) * x.size(3)).mul(-1)
             elif self.conv_type == 'standard':
@@ -174,7 +175,7 @@ class CouplingLayer(nn.Module):
     Matrix exp coupling layers: y2 = e^{s(x1)}x2 + b(x1)
     """
 
-    def __init__(self, flow_type, num_blocks, in_channels, hidden_channels):
+    def __init__(self, flow_type, num_blocks, in_channels, hidden_channels, expm_f):
         super(CouplingLayer, self).__init__()
         self.flow_type = flow_type
         self.in_channels = in_channels
@@ -203,6 +204,7 @@ class CouplingLayer(nn.Module):
         else:
             raise ValueError('wrong flow type')
         self.net = ConvBlock(num_blocks, self.x1_channels, self.hidden_channels, self.x2_channels * self.num_out)
+        self.expm = expm_f
 
     def forward(self, x, reverse=False, init=False):
         x1 = x[:, :self.x1_channels]
@@ -242,7 +244,7 @@ class CouplingLayer(nn.Module):
                     weight = torch.cat(outs[1:], dim=2).permute(0, 3, 4, 1, 2)
                     weight = self.rescale * torch.tanh(self.scale * weight + self.shift) + self.reshift
                     x2 = x2.unsqueeze(2).permute(0, 3, 4, 1, 2)
-                    x2 = torch.matmul(expm(weight), x2).permute(0, 3, 4, 1, 2).squeeze(2) + shift
+                    x2 = torch.matmul(self.expm(weight), x2).permute(0, 3, 4, 1, 2).squeeze(2) + shift
                     out = torch.cat([x1, x2], dim=1)
                     log_det = torch.diagonal(weight, dim1=-2, dim2=-1).sum([1, 2, 3])
                 else:
@@ -268,7 +270,7 @@ class CouplingLayer(nn.Module):
                     weight = torch.cat(outs[1:], dim=2).permute(0, 3, 4, 1, 2)
                     weight = self.rescale * torch.tanh(self.scale * weight + self.shift) + self.reshift
                     x2 = (x2 - shift).unsqueeze(2).permute(0, 3, 4, 1, 2)
-                    x2 = torch.matmul(expm(-weight), x2).permute(0, 3, 4, 1, 2).squeeze(2)
+                    x2 = torch.matmul(self.expm(-weight), x2).permute(0, 3, 4, 1, 2).squeeze(2)
                     out = torch.cat([x1, x2], dim=1)
                     log_det = torch.diagonal(weight, dim1=-2, dim2=-1).sum([1, 2, 3]).mul(-1)
                 else:

@@ -3,17 +3,26 @@ import torch.nn as nn
 from utils import squeeze2d, unsqueeze2d, split2d, unsplit2d
 from flows import ActNorm, Conv1x1, CouplingLayer
 
+from utils import expm as old_expm
+from new_matrix_exp import expm as new_expm
+
 
 class Model(nn.Module):
-    def __init__(self, num_levels, num_flows, conv_type, flow_type, num_blocks, hidden_channels, image_size=32,
+    def __init__(self, num_levels, num_flows, conv_type, flow_type, num_blocks, hidden_channels, image_size=32, expm_f="old",
                  in_channels=3):
         super(Model, self).__init__()
         self.num_levels = num_levels
         blocks = []
+
+        if expm_f == "old":
+            expm = old_expm
+        if expm_f == "new":
+            expm = new_expm
+
         for i in range(num_levels):
             in_channels = in_channels * 4
             image_size = image_size // 2
-            flows = [Flow(conv_type, flow_type, num_blocks, in_channels, hidden_channels, image_size) for _ in
+            flows = [Flow(conv_type, flow_type, num_blocks, in_channels, hidden_channels, image_size, expm) for _ in
                      range(num_flows[i])]
             if i < num_levels - 1:
                 in_channels = in_channels // 2
@@ -76,8 +85,9 @@ class Sequential(nn.Sequential):
 
 class Flow(Sequential):
 
-    def __init__(self, conv_type, flow_type, num_blocks, in_channels, hidden_channels, image_size):
+    def __init__(self, conv_type, flow_type, num_blocks, in_channels, hidden_channels, image_size, expm_f):
+
         super(Flow, self).__init__()
         self.add_module('actnorm', ActNorm(in_channels, image_size))
-        self.add_module('conv1x1', Conv1x1(in_channels, conv_type))
-        self.add_module('couplinglayer', CouplingLayer(flow_type, num_blocks, in_channels, hidden_channels))
+        self.add_module('conv1x1', Conv1x1(in_channels, conv_type, expm_f))
+        self.add_module('couplinglayer', CouplingLayer(flow_type, num_blocks, in_channels, hidden_channels, expm_f))
