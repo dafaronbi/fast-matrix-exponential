@@ -13,8 +13,6 @@ eps = 1e-8
 
 from new_matrix_exp import expm as new_expm
 
-expm = new_expm
-
 
 class ActNorm(nn.Module):
     """
@@ -175,7 +173,7 @@ class CouplingLayer(nn.Module):
     Matrix exp coupling layers: y2 = e^{s(x1)}x2 + b(x1)
     """
 
-    def __init__(self, flow_type, num_blocks, in_channels, hidden_channels, expm_f):
+    def __init__(self, flow_type, num_blocks, in_channels, hidden_channels, expm_f, series_f):
         super(CouplingLayer, self).__init__()
         self.flow_type = flow_type
         self.in_channels = in_channels
@@ -205,6 +203,7 @@ class CouplingLayer(nn.Module):
             raise ValueError('wrong flow type')
         self.net = ConvBlock(num_blocks, self.x1_channels, self.hidden_channels, self.x2_channels * self.num_out)
         self.expm = expm_f
+        self.series = series_f
 
     def forward(self, x, reverse=False, init=False):
         x1 = x[:, :self.x1_channels]
@@ -257,7 +256,7 @@ class CouplingLayer(nn.Module):
                     weight2 = self.rescale * torch.tanh(self.scale * weight2 + self.shift) + self.reshift + eps
                     weight3 = torch.matmul(weight1, weight2)
                     weight = torch.eye(self.x2_channels, device=x.device) + torch.matmul(
-                        torch.matmul(weight2, series(weight3)), weight1)
+                        torch.matmul(weight2, self.series(weight3)), weight1)
                     x2 = x2.unsqueeze(2).permute(0, 3, 4, 1, 2)
                     x2 = torch.matmul(weight, x2).permute(0, 3, 4, 1, 2).squeeze(2) + shift
                     out = torch.cat([x1, x2], dim=1)
@@ -283,7 +282,7 @@ class CouplingLayer(nn.Module):
                     weight2 = self.rescale * torch.tanh(self.scale * weight2 + self.shift) + self.reshift + eps
                     weight3 = torch.matmul(weight1, weight2)
                     weight = torch.eye(self.x2_channels, device=x.device) - torch.matmul(
-                        torch.matmul(weight2, series(-weight3)), weight1)
+                        torch.matmul(weight2, self.series(-weight3)), weight1)
                     x2 = (x2 - shift).unsqueeze(2).permute(0, 3, 4, 1, 2)
                     x2 = torch.matmul(weight, x2).permute(0, 3, 4, 1, 2).squeeze(2)
                     out = torch.cat([x1, x2], dim=1)

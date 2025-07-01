@@ -16,12 +16,95 @@ from adamax import Adamax
 from nets import Model
 from utils import preprocess, postprocess
 from torch.utils.tensorboard import SummaryWriter
+import torch.utils.data as data
+import pickle
 
+# Note that this will work with Python3
+def unpickle(file):
+    with open(file, 'rb') as fo:
+        dict = pickle.load(fo)
+    return dict
+
+class image_net(data.Dataset):
+
+    """Pytorch dataset for image net """
+    def __init__(self, data_folder, img_size=32):
+        """Constructor"""
+        data_files = os.listdir(data_folder)
+        data_files = [ data_folder + '/' + df for df in data_files if "data" in df]
+
+        x =  torch.tensor([])
+        y = torch.tensor([])
+
+        for df in data_files:
+            print("here")
+            d = unpickle(df)
+            x = d['data']
+            y = d['labels']
+            if "mean" in d.keys():
+                mean_image = d['mean']
+
+            x = x/np.float32(255)
+            if "mean" in d.keys():
+                mean_image = mean_image/np.float32(255)
+
+            # Labels are indexed from 1, shift it so that indexes start at 0
+            y = [i-1 for i in y]
+            data_size = x.shape[0]
+
+            if "mean" in d.keys():
+                x -= mean_image
+
+            img_size2 = img_size * img_size
+
+            x = np.dstack((x[:, :img_size2], x[:, img_size2:2*img_size2], x[:, 2*img_size2:]))
+            x = x.reshape((x.shape[0], img_size, img_size, 3)).transpose(0, 3, 1, 2)
+
+            # create mirrored images
+            X_train = x[0:data_size, :, :, :]
+            Y_train = y[0:data_size]
+            X_train_flip = X_train[:, :, :, ::-1]
+            Y_train_flip = Y_train
+            X_train = np.concatenate((X_train, X_train_flip), axis=0)
+            Y_train = np.concatenate((Y_train, Y_train_flip), axis=0)
+            x =  torch.cat((torch.tensor(x), torch.tensor(X_train)), dim=0)
+            y =  torch.cat((torch.tensor(y), torch.tensor(Y_train)), dim=0)
+
+        self.x = x
+        self.y = y
+
+
+
+    def __len__(self):
+        return len(self.x)
+
+    def __getitem__(self, index):
+        # """
+        # Args:
+        #     index (int): Index
+        # Returns:
+        #     tuple: (audio sample, *categorical targets, json_data)
+        # """
+
+        # d_index = self.data[index]
+
+        # z = d_index[0]
+        # mfcc = d_index[1]
+        # pyin = d_index[2]
+        # rms = d_index[3]
+
+        # #normalize data
+        # z = (z - self.z_min) / ( self.z_max -self.z_min)
+        # mfcc = (mfcc - self.mfcc_min) / ( self.mfcc_max -self.mfcc_min)
+        # pyin = (pyin - self.pitch_min) / (self.pitch_max - self.pitch_min) 
+        # # rms = (rms - rms_min) / (rms_max - rms_min)
+        
+        return self.x[index], self.y[index]
 
 def main(args):
 
     #log for tensorboard
-    writer = SummaryWriter(args.tb_path + "/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
+    writer = SummaryWriter(args.tb_path + "/" + args.save_dir + "_" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
 
     if args.mode == 'train':
         device = torch.device(args.device)
@@ -35,6 +118,8 @@ def main(args):
         optimizer = get_optimizer(args, model)
         scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, args.step_size, args.lr_decay)
         train_data, test_data = get_dataset(args)
+        # print(train_data[0][1])
+        # exit()
         train_loader = torch.utils.data.DataLoader(train_data, batch_size=args.batch_size,
                                                    num_workers=args.workers, shuffle=True)
         test_loader = torch.utils.data.DataLoader(test_data, batch_size=args.batch_size,
@@ -191,9 +276,14 @@ def test(args, device, model, test_loader, epoch):
 def sample(args, device, save_dir, model, epoch):
     z = torch.randn(args.sample_size, 3, args.image_size, args.image_size).to(device)
     model.eval()
+    
     with torch.no_grad():
+        t0 = time.time()
         output, _ = model(z, reverse=True)
+        t1 = time.time()
         output = postprocess(output, args.bits)
+    
+    print(f"Sample Time: {t1-t0}")
     sample_dir = os.path.join(save_dir, 'samples')
     if not os.path.isdir(sample_dir):
         os.makedirs(sample_dir)
@@ -215,7 +305,7 @@ def get_save_dir(args):
 
 def get_model(args):
     model = Model(args.levels, args.num_flows, args.conv_type, args.flow_type, args.num_blocks, args.hidden_channels,
-                  args.image_size, args.expm)
+                  args.image_size, args.expm, args.series)
     return model
 
 
@@ -233,25 +323,21 @@ def get_dataset(args):
         assert args.image_size == 32
         assert args.dimension == 3072
     elif args.dataset == 'imagenet32':
-        train_data = datasets.ImageFolder(os.path.join(args.dataset_dir, 'train_32x32'),
-                                          transform=transforms.Compose([
-                                              transforms.ToTensor()
-                                          ]))
-        test_data = datasets.ImageFolder(os.path.join(args.dataset_dir, 'valid_32x32'),
-                                         transform=transforms.Compose([
-                                             transforms.ToTensor()
-                                         ]))
+        train_data = image_net(os.path.join(args.dataset_dir, 'train_32x32'), 32)
+        test_data = image_net(os.path.join(args.dataset_dir, 'valid32x32'), 32)
         assert args.image_size == 32
         assert args.dimension == 3072
     elif args.dataset == 'imagenet64':
-        train_data = datasets.ImageFolder(os.path.join(args.dataset_dir, 'train_64x64'),
-                                          transform=transforms.Compose([
-                                              transforms.ToTensor()
-                                          ]))
-        test_data = datasets.ImageFolder(os.path.join(args.dataset_dir, 'valid_64x64'),
-                                         transform=transforms.Compose([
-                                             transforms.ToTensor()
-                                         ]))
+        train_data = image_net(os.path.join(args.dataset_dir, 'train_64x64'), 64)
+        test_data = image_net(os.path.join(args.dataset_dir, 'valid_64x64'), 64)
+        # train_data = datasets.ImageFolder(os.path.join(args.dataset_dir, 'train_64x64'),
+        #                                   transform=transforms.Compose([
+        #                                       transforms.ToTensor()
+        #                                   ]))
+        # test_data = datasets.ImageFolder(os.path.join(args.dataset_dir, 'valid_64x64'),
+        #                                  transform=transforms.Compose([
+        #                                      transforms.ToTensor()
+        #                                  ]))
         assert args.image_size == 64
         assert args.dimension == 12288
     else:
@@ -384,6 +470,9 @@ if __name__ == '__main__':
     parser.add_argument('--expm', type=str, default="old",
                         choices=['old', 'new'],
                         help='matrix exponential function to use (old or new)')
+    parser.add_argument('--series', type=str, default="old",
+                        choices=['old', 'new'],
+                        help='series function to use (old or new)')
     parser.add_argument('--tb_path', type=str, default="tensorboard/default",
                         help='path where tensorboard file will be saved')
     parse_args = parser.parse_args()
